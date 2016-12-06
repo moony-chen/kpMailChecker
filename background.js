@@ -134,9 +134,10 @@ function startRequest(params) {
     loadingAnimation.start();
 
   getInboxCount(
-    function(count) {
+    function(xmlDoc) {
       stopLoadingAnimation();
-      updateUnreadCount(count);
+      handleResultXML(xmlDoc);
+
     },
     function() {
       stopLoadingAnimation();
@@ -146,17 +147,102 @@ function startRequest(params) {
   );
 }
 
+function handleResultXML(xmlDoc) {
+  updateBadge(xmlDoc);
+  showNotification(xmlDoc);
+}
+
+function updateBadge(xmlDoc) {
+  var fullCountSet = xmlDoc.evaluate("/readviewentries/unreadinfo/unreadcount",
+            xmlDoc, null, XPathResult.ANY_TYPE, null);
+  var fullCountNode = fullCountSet.iterateNext();
+  if (fullCountNode) {
+    updateUnreadCount(fullCountNode.textContent);
+    return;
+  } else {
+    console.error(chrome.i18n.getMessage("mailcheck_node_error"));
+  }
+}
+
+function showNotification(xmlDoc) {
+  var fullCountSet = xmlDoc.evaluate("/readviewentries/viewentries/viewentry[@unread='true']",
+           xmlDoc, null, XPathResult.ANY_TYPE, null);
+  var entries = [];
+  var entry;
+  while (entry = fullCountSet.iterateNext()) {
+    entries.push(entry);
+  }
+
+  var newmails = entries.map(parseEntry).filter(notNotifed);
+  console.log(newmails);
+  if(newmails.length >0 ){
+    var mail1 = newmails[0];
+    var opt = {
+      type: "basic",
+      title: "You've got new emails",
+      message: mail1.from + "  " + mail1.date,
+      contextMessage: mail1.title,
+      iconUrl: "icon_128.png"
+    }
+
+    chrome.notifications.create(mail1.unid, opt, function() {
+      newmails.map(m =>m.unid)
+        .forEach(addNotifiedMail);
+    });
+  }
+
+  function getNotifiedMails() {
+    if(!sessionStorage.hasOwnProperty("notifiedMailIds")) {
+      sessionStorage.notifiedMailIds = "";
+    }
+    return sessionStorage.notifiedMailIds;
+  }
+  function addNotifiedMail(mailId) {
+    return sessionStorage.notifiedMailIds = getNotifiedMails()+";"+mailId;
+  }
+
+  function notNotifed(mail) {
+    var unid = mail.unid;
+    
+    if(getNotifiedMails().indexOf(unid)>=0) {
+      return false;
+    }
+    return true;
+  }
+
+  function parseEntry(viewentry) {
+    var entrydatas = viewentry.children;
+    var result={};
+    result.unid = viewentry.attributes["unid"].value;
+    for(var i = 0;i<entrydatas.length; i++) {
+      var entry = entrydatas[i];
+      if(entry.attributes["columnnumber"].value=="2") {
+        result.from = entry.children[0].textContent;
+      }
+      if(entry.attributes["columnnumber"].value=="5") {
+        result.date = entry.children[0].textContent;
+      }
+      if(entry.attributes["columnnumber"].value=="4") {
+        result.title = entry.children[0].textContent;
+      }
+    }
+    return result;
+
+  }
+
+}
+
 function getInboxCount(onSuccess, onError) {
   var xhr = new XMLHttpRequest();
   var abortTimerId = window.setTimeout(function() {
     xhr.abort();  // synchronously calls onreadystatechange
   }, requestTimeout);
 
-  function handleSuccess(count) {
+  function handleSuccess(xmlDoc) {
     localStorage.requestFailureCount = 0;
     window.clearTimeout(abortTimerId);
     if (onSuccess)
-      onSuccess(count);
+      onSuccess(xmlDoc);
   }
 
   var invokedErrorCallback = false;
@@ -175,15 +261,8 @@ function getInboxCount(onSuccess, onError) {
 
       if (xhr.responseXML) {
         var xmlDoc = xhr.responseXML;
-        var fullCountSet = xmlDoc.evaluate("/readviewentries/unreadinfo/unreadcount",
-            xmlDoc, null, XPathResult.ANY_TYPE, null);
-        var fullCountNode = fullCountSet.iterateNext();
-        if (fullCountNode) {
-          handleSuccess(fullCountNode.textContent);
-          return;
-        } else {
-          console.error(chrome.i18n.getMessage("mailcheck_node_error"));
-        }
+        handleSuccess(xmlDoc);
+        return;
       }
 
       handleError();

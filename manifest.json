@@ -16,6 +16,7 @@
     "alarms",
     "tabs",
     "webNavigation",
+    "notifications",
     "*://ndc-mail39.kp.org/"
    ],
   "version": "0.5.0",
